@@ -1,27 +1,23 @@
 from torchvision import models
 import torch.nn as nn
+from torchvision.models import resnet18
+
 
 class PerceptualLoss(nn.Module):
-    def __init__(self, device="cuda", layers=['relu1_2', 'relu2_2', 'relu3_3']):
+    def __init__(self, device):
         super(PerceptualLoss, self).__init__()
-        vgg = models.vgg16(weights=models.VGG16_Weights.IMAGENET1K_V1).features
-        self.layers = layers
-        self.selected_layers = {
-            'relu1_2': 3, 'relu2_2': 8, 'relu3_3': 15
-        }
-        self.model = nn.Sequential(*list(vgg.children())[:16]).to(device).eval()  # Move VGG to device
-        for param in self.model.parameters():
-            param.requires_grad = False  # Freeze VGG parameters
+        resnet = resnet18(weights=models.ResNet18_Weights.IMAGENET1K_V1)
+        self.feature_extractor = nn.Sequential(*list(resnet.children())[:-2])  # Use layers up to the penultimate
+        self.feature_extractor = self.feature_extractor.to(device).eval()  # Move to device and set to eval
+        for param in self.feature_extractor.parameters():
+            param.requires_grad = False
         self.device = device
 
     def forward(self, input, target):
-        input = input.to(self.device)  # Ensure input is on the same device
-        target = target.to(self.device)  # Ensure target is on the same device
-        
-        input_features, target_features = {}, {}
-        for name, layer in self.selected_layers.items():
-            input_features[name] = self.model[:layer](input)
-            target_features[name] = self.model[:layer](target)
-        loss = sum([nn.functional.l1_loss(input_features[name], target_features[name]) for name in self.layers])
+        input = input.to(self.device)
+        target = target.to(self.device)
+        input_features = self.feature_extractor(input)
+        target_features = self.feature_extractor(target)
+        loss = nn.functional.l1_loss(input_features, target_features)
         return loss
 
