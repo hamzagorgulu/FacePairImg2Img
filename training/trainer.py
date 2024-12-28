@@ -4,6 +4,7 @@ from torch.utils.data import DataLoader
 from torchvision.utils import save_image
 import os
 from tqdm import tqdm
+from loss_function import PerceptualLoss
 
 class BeardRemovalTrainer:
     def __init__(self, model, train_dataset, val_dataset, device, 
@@ -16,7 +17,8 @@ class BeardRemovalTrainer:
         self.val_loader = DataLoader(val_dataset, batch_size=batch_size, 
                                    shuffle=False, num_workers=2)
         
-        self.criterion = nn.L1Loss()
+        #self.criterion = nn.L1Loss()
+        self.criterion = PerceptualLoss()
         self.optimizer = torch.optim.Adam(model.parameters(), lr=learning_rate)
         self.scheduler = torch.optim.lr_scheduler.ReduceLROnPlateau(
             self.optimizer, mode='min', factor=0.5, patience=5, verbose=True
