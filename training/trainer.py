@@ -18,7 +18,7 @@ class BeardRemovalTrainer:
                                    shuffle=False, num_workers=2)
         
         #self.criterion = nn.L1Loss()
-        self.criterion = PerceptualLoss()
+        self.criterion = PerceptualLoss(self.device)
         self.optimizer = torch.optim.Adam(model.parameters(), lr=learning_rate)
         self.scheduler = torch.optim.lr_scheduler.ReduceLROnPlateau(
             self.optimizer, mode='min', factor=0.5, patience=5, verbose=True
