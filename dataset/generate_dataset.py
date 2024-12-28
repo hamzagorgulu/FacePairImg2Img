@@ -59,9 +59,12 @@ class FaceBeardGenerator:
 
         return True
 
-    def create_face_mask(self, image, cutoff_y_rate=0):
+    def create_face_mask(self, image, cutoff_y_rate=0.3, dilation_size=(50, 200)):
         """
-        Creates a mask for the lower portion of the face only.
+        Creates a mask for the lower portion of the face only with extended dilation below.
+        :param image: Input image.
+        :param cutoff_y_rate: Proportion of the face to consider for the mask.
+        :param dilation_size: Tuple of (width, height) for the dilation kernel.
         """
         if isinstance(image, Image.Image):
             img = np.array(image)
@@ -93,10 +96,17 @@ class FaceBeardGenerator:
                 hull = cv2.convexHull(face_points)
                 cv2.fillConvexPoly(mask, hull, 255)
 
-                kernel = np.ones((100, 100), np.uint8)
+                # Asymmetric dilation kernel for downward extension
+                kernel = cv2.getStructuringElement(cv2.MORPH_RECT, dilation_size)
                 mask = cv2.dilate(mask, kernel, iterations=1)
 
+                # Limit dilation to extend only downward
+                for y in range(h):
+                    if y < int(max_y * h):  # Cut off upward dilation
+                        mask[y, :] = 0
+
         return Image.fromarray(mask)
+
 
     def generate_versions(self, seed=42):
         # Generate base image with beard
