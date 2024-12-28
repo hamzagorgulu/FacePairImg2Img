@@ -59,7 +59,7 @@ class FaceBeardGenerator:
 
         return True
 
-    def create_face_mask(self, image, cutoff_y_rate=0.3, dilation_size=(50, 200)):
+    def create_face_mask(self, image, cutoff_y_rate=0.8, dilation_size=(50, 200)):
         """
         Creates a mask for the lower portion of the face only with extended dilation below.
         :param image: Input image.
