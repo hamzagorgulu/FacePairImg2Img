@@ -61,7 +61,8 @@ class FaceBeardGenerator:
 
     def create_face_mask(self, image, cutoff_y_rate=0.3):
         """
-        Creates a mask for the lower portion of the face with downward-only dilation.
+        Creates a mask for the lower portion of the face only.
+        Modified to dilate downward only.
         """
         if isinstance(image, Image.Image):
             img = np.array(image)
@@ -78,12 +79,10 @@ class FaceBeardGenerator:
             landmarks = results.multi_face_landmarks[0].landmark
             face_points = []
 
-            # Calculate face boundaries
             min_y = min(lm.y for lm in landmarks)
             max_y = max(lm.y for lm in landmarks)
             cutoff_y = min_y + (max_y - min_y) * cutoff_y_rate
 
-            # Collect points below cutoff
             for lm in landmarks:
                 if lm.y > cutoff_y:
                     x = int(lm.x * w)
@@ -95,24 +94,13 @@ class FaceBeardGenerator:
                 hull = cv2.convexHull(face_points)
                 cv2.fillConvexPoly(mask, hull, 255)
 
-                # Create vertical-only kernel for downward dilation
-                vertical_kernel = np.ones((200, 1), np.uint8)
+                # Create a vertical-only kernel for downward dilation
+                vertical_kernel = np.ones((200, 1), np.uint8)  # 200 pixels down, 1 pixel wide
                 
-                # Get the bottom part of the face mask
-                bottom_half = mask.copy()
-                face_bottom = np.max([pt[1] for pt in hull])
-                bottom_half[:face_bottom, :] = 0
-                
-                # Apply dilation only to bottom part
-                dilated_bottom = cv2.dilate(bottom_half, vertical_kernel, iterations=1)
-                
-                # Combine original mask with dilated bottom
-                mask = cv2.bitwise_or(mask, dilated_bottom)
-                
-                # Optional: Smooth the mask edges slightly
-                mask = cv2.GaussianBlur(mask, (5, 5), 0)
+                # Dilate the mask vertically
+                mask = cv2.dilate(mask, vertical_kernel, iterations=1)
 
-        return Image.fromarray(mask)
+            return Image.fromarray(mask)
 
     def generate_versions(self, seed=42):
         # Generate base image with beard
