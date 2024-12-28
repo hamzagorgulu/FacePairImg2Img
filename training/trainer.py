@@ -97,7 +97,7 @@ class BeardRemovalTrainer:
             print(f'Epoch {epoch}: Train Loss = {train_loss:.4f}, Val Loss = {val_loss:.4f}')
             
             # Save samples
-            if epoch % 5 == 0:
+            if epoch % 1 == 0:
                 sample_batch = next(iter(self.val_loader))
                 self.save_samples(epoch, sample_batch)
             
