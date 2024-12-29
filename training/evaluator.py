@@ -21,7 +21,12 @@ class Evaluator:
         image1 = (image1 - image1.min()) / (image1.max() - image1.min())
         image2 = (image2 - image2.min()) / (image2.max() - image2.min())
 
-        return ssim(image1, image2, multichannel=True, data_range=image1.max() - image1.min())
+        # Dynamically set win_size based on image dimensions
+        min_dim = min(image1.shape[0], image1.shape[1])
+        win_size = min(7, min_dim if min_dim % 2 == 1 else min_dim - 1)  # Ensure odd value
+
+        return ssim(image1, image2, multichannel=True, data_range=image1.max() - image1.min(), win_size=win_size)
+
     
     def calculate_lpips(self, image1, image2):
         """
