@@ -5,11 +5,13 @@ from torchvision.utils import save_image
 import os
 from tqdm import tqdm
 from loss_function import PerceptualLoss
+from evaluator import Evaluator
 import matplotlib.pyplot as plt
 
-class BeardRemovalTrainer:
+class BeardRemovalTrainer(Evaluator):
     def __init__(self, model, train_dataset, val_dataset, device, 
                  learning_rate=0.0002, batch_size=8):
+        super().__init__(device)
         self.device = device
         self.model = model.to(device)
         
