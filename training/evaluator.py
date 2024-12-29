@@ -1,32 +1,19 @@
 import torch
-import torch.nn.functional as F
-from skimage.metrics import structural_similarity as ssim
 from lpips import LPIPS
+from torchmetrics.image.ssim import StructuralSimilarityIndexMeasure
 import numpy as np
 
 class Evaluator:
     def __init__(self, device):
         self.device = device
         self.lpips_metric = LPIPS(net='alex').to(device)  # Initialize LPIPS metric
+        self.ssim_metric = StructuralSimilarityIndexMeasure(data_range=1.0).to(device)  # SSIM Metric
     
     def calculate_ssim(self, image1, image2):
         """
-        Calculate SSIM between two images.
+        Calculate SSIM between two images using torchmetrics.
         """
-        # Convert tensors to numpy
-        image1 = image1.permute(1, 2, 0).cpu().numpy()
-        image2 = image2.permute(1, 2, 0).cpu().numpy()
-
-        # Ensure images are in the range [0, 1]
-        image1 = (image1 - image1.min()) / (image1.max() - image1.min())
-        image2 = (image2 - image2.min()) / (image2.max() - image2.min())
-
-        # Dynamically set win_size based on image dimensions
-        min_dim = min(image1.shape[0], image1.shape[1])
-        win_size = min(7, min_dim if min_dim % 2 == 1 else min_dim - 1)  # Ensure odd value
-
-        return ssim(image1, image2, multichannel=True, data_range=image1.max() - image1.min(), win_size=win_size)
-
+        return self.ssim_metric(image1.unsqueeze(0), image2.unsqueeze(0)).item()
     
     def calculate_lpips(self, image1, image2):
         """
