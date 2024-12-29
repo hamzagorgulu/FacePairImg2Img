@@ -1,5 +1,3 @@
-# with face filter
-
 import torch
 from diffusers import StableDiffusionPipeline, StableDiffusionInpaintPipeline
 import numpy as np
@@ -26,17 +24,24 @@ class FaceBeardGenerator:
             torch_dtype=torch.float16
         ).to(self.device)
 
-        # Initialize face mesh detector for masking, and detecting the number of faces in the generated images
+        # Initialize face mesh detector for mask creation
         self.mp_face_mesh = mp.solutions.face_mesh
         self.face_mesh = self.mp_face_mesh.FaceMesh(
             static_image_mode=True,
-            max_num_faces=2,  # Set to 2 to detect if there's more than one face
+            max_num_faces=1,
+            min_detection_confidence=0.5
+        )
+
+        # Initialize face detection for counting faces
+        self.mp_face_detection = mp.solutions.face_detection
+        self.face_detector = self.mp_face_detection.FaceDetection(
+            model_selection=1,  # 0 for short-range, 1 for full-range
             min_detection_confidence=0.5
         )
 
     def check_face_count(self, image):
         """
-        Check if the image contains exactly one face.
+        Check if the image contains exactly one face using MediaPipe Face Detection.
         Returns True if exactly one face is detected, False otherwise.
         """
         if isinstance(image, Image.Image):
@@ -45,24 +50,25 @@ class FaceBeardGenerator:
         else:
             img = image
 
-        results = self.face_mesh.process(cv2.cvtColor(img, cv2.COLOR_BGR2RGB))
+        # Convert to RGB for MediaPipe
+        img_rgb = cv2.cvtColor(img, cv2.COLOR_BGR2RGB)
+        results = self.face_detector.process(img_rgb)
 
-        # Check if faces were detected and count them
-        if results.multi_face_landmarks is None:
+        # Count detected faces
+        if not results.detections:
             print("No faces detected in the image.")
             return False
 
-        num_faces = len(results.multi_face_landmarks)
+        num_faces = len(results.detections)
         if num_faces != 1:
             print(f"Found {num_faces} faces in the image. Skipping...")
             return False
 
         return True
 
-    def create_face_mask(self, image, cutoff_y_rate=0.0):
+    def create_face_mask(self, image, cutoff_y_rate=0):
         """
         Creates a mask for the lower portion of the face only.
-        Modified to dilate downward only.
         """
         if isinstance(image, Image.Image):
             img = np.array(image)
@@ -94,13 +100,10 @@ class FaceBeardGenerator:
                 hull = cv2.convexHull(face_points)
                 cv2.fillConvexPoly(mask, hull, 255)
 
-                # Create a vertical-only kernel for downward dilation
-                vertical_kernel = np.ones((200, 1), np.uint8)  # 200 pixels down, 1 pixel wide
-                
-                # Dilate the mask vertically
-                mask = cv2.dilate(mask, vertical_kernel, iterations=1)
+                kernel = np.ones((100, 100), np.uint8)
+                mask = cv2.dilate(mask, kernel, iterations=1)
 
-            return Image.fromarray(mask)
+        return Image.fromarray(mask)
 
     def generate_versions(self, seed=42):
         # Generate base image with beard
@@ -203,4 +206,4 @@ class FaceBeardGenerator:
         image.save(os.path.join(output_dir, "original.png"))
         clean_shaven.save(os.path.join(output_dir, "clean_shaven.png"))
         mask.save(os.path.join(output_dir, "mask.png"))
-        return True    
+        return True
