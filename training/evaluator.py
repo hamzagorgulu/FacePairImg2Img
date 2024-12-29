@@ -145,6 +145,8 @@ class Evaluator(ABC):
         
         with torch.no_grad():
             for no_beard_images, beard_images, _ in test_loader:
+                print(no_beard_images)
+                print(beard_images)
 
                 beard_images = beard_images.to(self.device)
                 no_beard_images = no_beard_images.to(self.device)
