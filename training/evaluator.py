@@ -1,4 +1,5 @@
 import torch
+import torch.nn.functional as F
 import numpy as np
 from torch.utils.data import DataLoader
 import logging
@@ -7,6 +8,60 @@ from abc import ABC
 from pytorch_fid import fid_score
 import lpips
 import kornia.losses as kl
+
+def gaussian_kernel(size: int, sigma: float) -> torch.Tensor:
+    """Create a Gaussian kernel."""
+    coords = torch.arange(size, dtype=torch.float32)
+    coords -= size // 2
+    
+    g = coords.pow(2)
+    g = (-g / (2 * sigma ** 2)).exp()
+    
+    return g / g.sum()
+
+def create_window(window_size: int, channel: int) -> torch.Tensor:
+    """Create a SSIM window."""
+    _1D_window = gaussian_kernel(window_size, 1.5).unsqueeze(1)
+    _2D_window = _1D_window.mm(_1D_window.t()).float().unsqueeze(0).unsqueeze(0)
+    window = _2D_window.expand(channel, 1, window_size, window_size).contiguous()
+    return window
+
+def calculate_ssim(img1: torch.Tensor, img2: torch.Tensor, window_size: int = 11) -> torch.Tensor:
+    """
+    Calculate SSIM between two images.
+    
+    Args:
+        img1: First image [B, C, H, W]
+        img2: Second image [B, C, H, W]
+        window_size: Size of the sliding window
+        
+    Returns:
+        torch.Tensor: SSIM score
+    """
+    C1 = (0.01 * 255) ** 2
+    C2 = (0.03 * 255) ** 2
+    
+    # Create window
+    window = create_window(window_size, img1.size(1)).to(img1.device)
+    
+    # Calculate means
+    mu1 = F.conv2d(img1, window, padding=window_size//2, groups=img1.size(1))
+    mu2 = F.conv2d(img2, window, padding=window_size//2, groups=img2.size(1))
+    
+    mu1_sq = mu1.pow(2)
+    mu2_sq = mu2.pow(2)
+    mu1_mu2 = mu1 * mu2
+    
+    # Calculate variances and covariance
+    sigma1_sq = F.conv2d(img1 * img1, window, padding=window_size//2, groups=img1.size(1)) - mu1_sq
+    sigma2_sq = F.conv2d(img2 * img2, window, padding=window_size//2, groups=img2.size(1)) - mu2_sq
+    sigma12 = F.conv2d(img1 * img2, window, padding=window_size//2, groups=img1.size(1)) - mu1_mu2
+    
+    # Calculate SSIM
+    ssim_map = ((2 * mu1_mu2 + C1) * (2 * sigma12 + C2)) / \
+               ((mu1_sq + mu2_sq + C1) * (sigma1_sq + sigma2_sq + C2))
+    
+    return ssim_map.mean()
 
 class Evaluator(ABC):
     """Base evaluator class for paired image translation evaluation."""
@@ -17,7 +72,6 @@ class Evaluator(ABC):
         
     def _init_metrics(self):
         """Initialize metric modules."""
-        self.ssim_module = kl.SSIM(window_size=11, reduction='mean')
         self.lpips_module = lpips.LPIPS(net='alex').to(self.device)
         
     def calculate_ssim(self, beard_images: torch.Tensor, no_beard_images: torch.Tensor) -> float:
@@ -35,7 +89,7 @@ class Evaluator(ABC):
         Returns:
             float: Mean SSIM score (higher is better)
         """
-        return float(1 - self.ssim_module(no_beard_images, beard_images))
+        return float(calculate_ssim(no_beard_images, beard_images))
 
     def calculate_lpips(self, beard_images: torch.Tensor, no_beard_images: torch.Tensor) -> float:
         """
@@ -75,18 +129,12 @@ class Evaluator(ABC):
     def evaluate(self, test_dataset):
         """
         Run comprehensive evaluation using all metrics.
-        
-        Args:
-            test_dataset: Dataset containing paired beard/no-beard images
-            
-        Returns:
-            dict: Dictionary containing all computed metrics
         """
         logging.info("Starting evaluation...")
         
         test_loader = DataLoader(
             test_dataset,
-            batch_size=8,  # Adjust batch size as needed
+            batch_size=8,
             shuffle=False
         )
         
@@ -100,14 +148,13 @@ class Evaluator(ABC):
                 beard_images = beard_images.to(self.device)
                 no_beard_images = no_beard_images.to(self.device)
                 
-                # Calculate per-batch metrics
                 ssim_scores.append(self.calculate_ssim(beard_images, no_beard_images))
                 lpips_scores.append(self.calculate_lpips(beard_images, no_beard_images))
                 
-                # Collect paths for FID calculation
-                for pair in test_dataset.image_pairs:
-                    beard_paths.append(pair[1])
-                    no_beard_paths.append(pair[2])
+            # Collect paths for FID calculation
+            for pair in test_dataset.image_pairs:
+                beard_paths.append(pair[1])
+                no_beard_paths.append(pair[2])
         
         # Calculate FID
         fid_score = self.calculate_fid(beard_paths, no_beard_paths)
