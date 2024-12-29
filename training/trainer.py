@@ -5,6 +5,7 @@ from torchvision.utils import save_image
 import os
 from tqdm import tqdm
 from loss_function import PerceptualLoss
+import matplotlib.pyplot as plt
 
 class BeardRemovalTrainer:
     def __init__(self, model, train_dataset, val_dataset, device, 
@@ -23,6 +24,9 @@ class BeardRemovalTrainer:
         self.scheduler = torch.optim.lr_scheduler.ReduceLROnPlateau(
             self.optimizer, mode='min', factor=0.5, patience=5, verbose=True
         )
+
+        self.train_losses = []
+        self.val_losses = []
         
         # Create directories for checkpoints and samples
         os.makedirs('checkpoints', exist_ok=True)
@@ -93,6 +97,9 @@ class BeardRemovalTrainer:
         for epoch in range(num_epochs):
             train_loss = self.train_epoch(epoch)
             val_loss = self.validate()
+
+            self.train_losses.append(train_loss)
+            self.val_losses.append(val_loss)
             
             print(f'Epoch {epoch}: Train Loss = {train_loss:.4f}, Val Loss = {val_loss:.4f}')
             
@@ -113,3 +120,15 @@ class BeardRemovalTrainer:
                     'optimizer_state_dict': self.optimizer.state_dict(),
                     'val_loss': val_loss,
                 }, 'checkpoints/best_model.pth')
+
+    def plot_loss_curve(self):
+        plt.figure(figsize=(10, 6))
+        plt.plot(self.train_losses, label='Training Loss')
+        plt.plot(self.val_losses, label='Validation Loss')
+        plt.xlabel('Epoch')
+        plt.ylabel('Loss')
+        plt.title('Training and Validation Loss Curve')
+        plt.legend()
+        plt.grid()
+        plt.savefig('loss_curve.png')
+        plt.show()

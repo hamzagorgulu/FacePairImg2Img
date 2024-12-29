@@ -26,7 +26,7 @@ class FaceBeardGenerator:
             torch_dtype=torch.float16
         ).to(self.device)
 
-        # Initialize face mesh detector - now detecting multiple faces
+        # Initialize face mesh detector for masking, and detecting the number of faces in the generated images
         self.mp_face_mesh = mp.solutions.face_mesh
         self.face_mesh = self.mp_face_mesh.FaceMesh(
             static_image_mode=True,
@@ -59,7 +59,7 @@ class FaceBeardGenerator:
 
         return True
 
-    def create_face_mask(self, image, cutoff_y_rate=0.3):
+    def create_face_mask(self, image, cutoff_y_rate=0.0):
         """
         Creates a mask for the lower portion of the face only.
         Modified to dilate downward only.
