@@ -145,17 +145,16 @@ def visualize_images(image_paths, epoch_max, step, sample_nums):
     plt.tight_layout()
     plt.show()
 
-def visualize_test_samples(folder_path, step=1, output_path="concatenated_result.png"):
+def visualize_test_samples(folder_path, step=1):
     """
-    Concatenates images from a folder vertically and saves the result.
+    Concatenates images from a folder vertically and displays the result.
 
     Args:
         folder_path (str): Path to the folder containing images.
         step (int): Step size for skipping samples.
-        output_path (str): Path to save the concatenated result.
 
     Returns:
-        Image: The concatenated image.
+        None: Displays the concatenated image.
     """
     # List all files in the folder
     all_files = sorted(os.listdir(folder_path))
@@ -182,7 +181,8 @@ def visualize_test_samples(folder_path, step=1, output_path="concatenated_result
         concatenated_image.paste(img, (0, y_offset))
         y_offset += img.height
 
-    # Save the concatenated image
-    concatenated_image.plot()
-
-    return concatenated_image
+    # Display the concatenated image using matplotlib
+    plt.figure(figsize=(8, len(images) * 3))  # Adjust size dynamically
+    plt.imshow(concatenated_image)
+    plt.axis("off")
+    plt.show()
