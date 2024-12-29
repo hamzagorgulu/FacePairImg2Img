@@ -1,144 +1,116 @@
-from torchmetrics.image import StructuralSimilarityIndexMeasure, LearnedPerceptualImagePatchSimilarity, FrechetInceptionDistance
 import torch
 import numpy as np
 from torch.utils.data import DataLoader
 import logging
-from typing import Dict, List, Union
-from abc import ABC, abstractmethod
+from typing import Dict, List
+from abc import ABC
+from pytorch_fid import fid_score
+import lpips
+import kornia.losses as kl
 
 class Evaluator(ABC):
-    """Base evaluator class that implements common image translation metrics."""
+    """Base evaluator class for paired image translation evaluation."""
     
     def __init__(self, device: str = 'cuda'):
-        """
-        Initialize evaluator with device specification.
-        
-        Args:
-            device: Device to run evaluations on ('cuda' or 'cpu')
-        """
         self.device = device
         self._init_metrics()
         
     def _init_metrics(self):
-        """Initialize all metric modules."""
-        self.ssim_module = StructuralSimilarityIndexMeasure(data_range=1.0).to(self.device)
-        self.lpips_module = LearnedPerceptualImagePatchSimilarity(net_type='alex').to(self.device)
-        self.fid_module = FrechetInceptionDistance(normalize=True).to(self.device)
+        """Initialize metric modules."""
+        self.ssim_module = kl.SSIM(window_size=11, reduction='mean')
+        self.lpips_module = lpips.LPIPS(net='alex').to(self.device)
         
-    def calculate_ssim(self, real_images: torch.Tensor, generated_images: torch.Tensor) -> float:
+    def calculate_ssim(self, beard_images: torch.Tensor, no_beard_images: torch.Tensor) -> float:
         """
-        Calculate SSIM between real and generated images.
+        Calculate SSIM between beard and no-beard images.
         
-        Intuition: SSIM measures structural similarity between images. For beard removal,
-        we expect moderate SSIM scores since we want to preserve overall facial structure
-        while changing the beard region. Very high SSIM might indicate insufficient beard
-        removal.
+        Intuition: SSIM measures structural similarity. For beard removal evaluation,
+        moderate SSIM scores are expected as facial structure should be preserved
+        while beard region changes.
         
         Args:
-            real_images: Tensor of real images [B, C, H, W]
-            generated_images: Tensor of generated images [B, C, H, W]
+            beard_images: Tensor of images with beards [B, C, H, W]
+            no_beard_images: Tensor of images without beards [B, C, H, W]
         
         Returns:
-            float: Mean SSIM score
+            float: Mean SSIM score (higher is better)
         """
-        return float(self.ssim_module(generated_images, real_images))
+        return float(1 - self.ssim_module(no_beard_images, beard_images))
 
-    def calculate_lpips(self, real_images: torch.Tensor, generated_images: torch.Tensor) -> float:
+    def calculate_lpips(self, beard_images: torch.Tensor, no_beard_images: torch.Tensor) -> float:
         """
-        Calculate LPIPS between real and generated images.
+        Calculate LPIPS between beard and no-beard images.
         
         Intuition: LPIPS captures perceptual similarity using deep features. For beard removal,
-        it helps ensure the generated faces look natural and maintain identity, while allowing
-        for the desired beard removal changes.
+        it helps evaluate if the no-beard images maintain identity while allowing for
+        the desired beard removal changes.
         
         Args:
-            real_images: Tensor of real images [B, C, H, W]
-            generated_images: Tensor of generated images [B, C, H, W]
+            beard_images: Tensor of images with beards [B, C, H, W]
+            no_beard_images: Tensor of images without beards [B, C, H, W]
         
         Returns:
-            float: Mean LPIPS score
+            float: Mean LPIPS score (lower is better)
         """
-        return float(self.lpips_module(generated_images, real_images).mean())
+        with torch.no_grad():
+            return float(self.lpips_module(no_beard_images, beard_images).mean())
 
-    def calculate_fid(self, real_loader: DataLoader, generated_loader: DataLoader) -> float:
+    def calculate_fid(self, beard_paths: List[str], no_beard_paths: List[str]) -> float:
         """
-        Calculate FID between real and generated image distributions.
+        Calculate FID between beard and no-beard image distributions.
         
-        Intuition: FID measures both quality and diversity of generated images. For beard removal,
-        it helps ensure generated clean-shaven faces maintain realism and natural variation,
-        rather than converging to average faces.
+        Intuition: FID measures quality and diversity of the no-beard distribution
+        compared to the beard distribution. It helps ensure the no-beard images
+        maintain natural variation and don't converge to average faces.
         
         Args:
-            real_loader: DataLoader for real images
-            generated_loader: DataLoader for generated images
+            beard_paths: List of paths to beard images
+            no_beard_paths: List of paths to no-beard images
         
         Returns:
-            float: FID score
+            float: FID score (lower is better)
         """
-        self.fid_module.reset()
-        
-        # Process real images
-        for batch in real_loader:
-            images = batch[0].to(self.device)
-            self.fid_module.update(images, real=True)
-            
-        # Process generated images
-        for batch in generated_loader:
-            images = batch[0].to(self.device)
-            self.fid_module.update(images, real=False)
-            
-        return float(self.fid_module.compute())
+        return float(fid_score.calculate_fid_given_paths([beard_paths, no_beard_paths]))
 
-    @abstractmethod
-    def get_generated_images(self, batch: torch.Tensor) -> torch.Tensor:
-        """
-        Abstract method to generate images from input batch.
-        Must be implemented by child classes.
-        """
-        pass
-
-    def evaluate(self, test_loader: DataLoader) -> Dict[str, float]:
+    def evaluate(self, test_dataset):
         """
         Run comprehensive evaluation using all metrics.
         
         Args:
-            test_loader: DataLoader containing test data
+            test_dataset: Dataset containing paired beard/no-beard images
             
         Returns:
             dict: Dictionary containing all computed metrics
         """
         logging.info("Starting evaluation...")
         
-        real_batches: List[torch.Tensor] = []
-        generated_batches: List[torch.Tensor] = []
+        test_loader = DataLoader(
+            test_dataset,
+            batch_size=8,  # Adjust batch size as needed
+            shuffle=False
+        )
+        
         ssim_scores: List[float] = []
         lpips_scores: List[float] = []
+        beard_paths: List[str] = []
+        no_beard_paths: List[str] = []
         
         with torch.no_grad():
-            for batch in test_loader:
-                real_images = batch[0].to(self.device)
-                generated_images = self.get_generated_images(real_images)
+            for beard_images, no_beard_images in test_loader:
+                beard_images = beard_images.to(self.device)
+                no_beard_images = no_beard_images.to(self.device)
                 
                 # Calculate per-batch metrics
-                ssim_scores.append(self.calculate_ssim(real_images, generated_images))
-                lpips_scores.append(self.calculate_lpips(real_images, generated_images))
+                ssim_scores.append(self.calculate_ssim(beard_images, no_beard_images))
+                lpips_scores.append(self.calculate_lpips(beard_images, no_beard_images))
                 
-                # Store for FID calculation
-                real_batches.append(real_images.cpu())
-                generated_batches.append(generated_images.cpu())
-        
-        # Create separate dataloaders for FID
-        real_fid_loader = DataLoader(
-            torch.cat(real_batches, 0),
-            batch_size=test_loader.batch_size
-        )
-        generated_fid_loader = DataLoader(
-            torch.cat(generated_batches, 0),
-            batch_size=test_loader.batch_size
-        )
+                # Collect paths for FID calculation
+                for pair in test_dataset.image_pairs:
+                    beard_paths.append(pair[1])
+                    no_beard_paths.append(pair[2])
         
         # Calculate FID
-        fid_score = self.calculate_fid(real_fid_loader, generated_fid_loader)
+        fid_score = self.calculate_fid(beard_paths, no_beard_paths)
         
         # Calculate mean scores
         results = {
