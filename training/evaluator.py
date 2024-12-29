@@ -144,7 +144,8 @@ class Evaluator(ABC):
         no_beard_paths: List[str] = []
         
         with torch.no_grad():
-            for _, beard_images, no_beard_images in test_loader:
+            for no_beard_images, beard_images, _ in test_loader:
+
                 beard_images = beard_images.to(self.device)
                 no_beard_images = no_beard_images.to(self.device)
                 
