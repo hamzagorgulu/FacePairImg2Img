@@ -1,177 +1,81 @@
 import torch
 import torch.nn.functional as F
+from skimage.metrics import structural_similarity as ssim
+from lpips import LPIPS
 import numpy as np
-from torch.utils.data import DataLoader
-import logging
-from typing import Dict, List
-from abc import ABC
-from pytorch_fid import fid_score
-import lpips
-import kornia.losses as kl
 
-def gaussian_kernel(size: int, sigma: float) -> torch.Tensor:
-    """Create a Gaussian kernel."""
-    coords = torch.arange(size, dtype=torch.float32)
-    coords -= size // 2
-    
-    g = coords.pow(2)
-    g = (-g / (2 * sigma ** 2)).exp()
-    
-    return g / g.sum()
-
-def create_window(window_size: int, channel: int) -> torch.Tensor:
-    """Create a SSIM window."""
-    _1D_window = gaussian_kernel(window_size, 1.5).unsqueeze(1)
-    _2D_window = _1D_window.mm(_1D_window.t()).float().unsqueeze(0).unsqueeze(0)
-    window = _2D_window.expand(channel, 1, window_size, window_size).contiguous()
-    return window
-
-def calculate_ssim(img1: torch.Tensor, img2: torch.Tensor, window_size: int = 11) -> torch.Tensor:
-    """
-    Calculate SSIM between two images.
-    
-    Args:
-        img1: First image [B, C, H, W]
-        img2: Second image [B, C, H, W]
-        window_size: Size of the sliding window
-        
-    Returns:
-        torch.Tensor: SSIM score
-    """
-    C1 = (0.01 * 255) ** 2
-    C2 = (0.03 * 255) ** 2
-    
-    # Create window
-    window = create_window(window_size, img1.size(1)).to(img1.device)
-    
-    # Calculate means
-    mu1 = F.conv2d(img1, window, padding=window_size//2, groups=img1.size(1))
-    mu2 = F.conv2d(img2, window, padding=window_size//2, groups=img2.size(1))
-    
-    mu1_sq = mu1.pow(2)
-    mu2_sq = mu2.pow(2)
-    mu1_mu2 = mu1 * mu2
-    
-    # Calculate variances and covariance
-    sigma1_sq = F.conv2d(img1 * img1, window, padding=window_size//2, groups=img1.size(1)) - mu1_sq
-    sigma2_sq = F.conv2d(img2 * img2, window, padding=window_size//2, groups=img2.size(1)) - mu2_sq
-    sigma12 = F.conv2d(img1 * img2, window, padding=window_size//2, groups=img1.size(1)) - mu1_mu2
-    
-    # Calculate SSIM
-    ssim_map = ((2 * mu1_mu2 + C1) * (2 * sigma12 + C2)) / \
-               ((mu1_sq + mu2_sq + C1) * (sigma1_sq + sigma2_sq + C2))
-    
-    return ssim_map.mean()
-
-class Evaluator(ABC):
-    """Base evaluator class for paired image translation evaluation."""
-    
-    def __init__(self, device: str = 'cuda'):
+class Evaluator:
+    def __init__(self, device):
         self.device = device
-        self._init_metrics()
-        
-    def _init_metrics(self):
-        """Initialize metric modules."""
-        self.lpips_module = lpips.LPIPS(net='alex').to(self.device)
-        
-    def calculate_ssim(self, beard_images: torch.Tensor, no_beard_images: torch.Tensor) -> float:
+        self.lpips_metric = LPIPS(net='alex').to(device)  # Initialize LPIPS metric
+    
+    def calculate_ssim(self, image1, image2):
         """
-        Calculate SSIM between beard and no-beard images.
-        
-        Intuition: SSIM measures structural similarity. For beard removal evaluation,
-        moderate SSIM scores are expected as facial structure should be preserved
-        while beard region changes.
-        
-        Args:
-            beard_images: Tensor of images with beards [B, C, H, W]
-            no_beard_images: Tensor of images without beards [B, C, H, W]
-        
-        Returns:
-            float: Mean SSIM score (higher is better)
+        Calculate SSIM between two images.
         """
-        return float(calculate_ssim(no_beard_images, beard_images))
+        # Convert tensors to numpy
+        image1 = image1.permute(1, 2, 0).cpu().numpy()
+        image2 = image2.permute(1, 2, 0).cpu().numpy()
 
-    def calculate_lpips(self, beard_images: torch.Tensor, no_beard_images: torch.Tensor) -> float:
+        # Ensure images are in the range [0, 1]
+        image1 = (image1 - image1.min()) / (image1.max() - image1.min())
+        image2 = (image2 - image2.min()) / (image2.max() - image2.min())
+
+        return ssim(image1, image2, multichannel=True, data_range=image1.max() - image1.min())
+    
+    def calculate_lpips(self, image1, image2):
         """
-        Calculate LPIPS between beard and no-beard images.
-        
-        Intuition: LPIPS captures perceptual similarity using deep features. For beard removal,
-        it helps evaluate if the no-beard images maintain identity while allowing for
-        the desired beard removal changes.
-        
-        Args:
-            beard_images: Tensor of images with beards [B, C, H, W]
-            no_beard_images: Tensor of images without beards [B, C, H, W]
-        
-        Returns:
-            float: Mean LPIPS score (lower is better)
+        Calculate LPIPS between two images.
         """
+        image1 = image1.unsqueeze(0).to(self.device)
+        image2 = image2.unsqueeze(0).to(self.device)
+
+        return self.lpips_metric(image1, image2).item()
+    
+    def evaluate_batch(self, input_batch, target_batch, generated_batch):
+        """
+        Evaluate a batch of images with SSIM and LPIPS.
+        """
+        batch_size = input_batch.size(0)
+        ssim_scores = []
+        lpips_scores = []
+
+        for i in range(batch_size):
+            ssim_score = self.calculate_ssim(generated_batch[i], target_batch[i])
+            lpips_score = self.calculate_lpips(generated_batch[i], target_batch[i])
+
+            ssim_scores.append(ssim_score)
+            lpips_scores.append(lpips_score)
+
+        mean_ssim = np.mean(ssim_scores)
+        mean_lpips = np.mean(lpips_scores)
+
+        return mean_ssim, mean_lpips
+
+    def evaluate(self, model, dataloader):
+        """
+        Evaluate the model on the validation dataset.
+        """
+        model.eval()
+        total_ssim = 0
+        total_lpips = 0
+        num_batches = 0
+
         with torch.no_grad():
-            return float(self.lpips_module(no_beard_images, beard_images).mean())
+            for batch in dataloader:
+                input_images = batch['input'].to(self.device)
+                target_images = batch['target'].to(self.device)
 
-    def calculate_fid(self, beard_paths: List[str], no_beard_paths: List[str]) -> float:
-        """
-        Calculate FID between beard and no-beard image distributions.
-        
-        Intuition: FID measures quality and diversity of the no-beard distribution
-        compared to the beard distribution. It helps ensure the no-beard images
-        maintain natural variation and don't converge to average faces.
-        
-        Args:
-            beard_paths: List of paths to beard images
-            no_beard_paths: List of paths to no-beard images
-        
-        Returns:
-            float: FID score (lower is better)
-        """
-        return float(fid_score.calculate_fid_given_paths([beard_paths, no_beard_paths]))
+                generated_images = model(input_images)
 
-    def evaluate(self, test_dataset):
-        """
-        Run comprehensive evaluation using all metrics.
-        """
-        logging.info("Starting evaluation...")
-        
-        test_loader = DataLoader(
-            test_dataset,
-            batch_size=8,
-            shuffle=False
-        )
-        
-        ssim_scores: List[float] = []
-        lpips_scores: List[float] = []
-        beard_paths: List[str] = []
-        no_beard_paths: List[str] = []
-        
-        with torch.no_grad():
-            for no_beard_images, beard_images, _ in test_loader:
-                print(no_beard_images)
-                print(beard_images)
+                # Evaluate SSIM and LPIPS
+                batch_ssim, batch_lpips = self.evaluate_batch(input_images, target_images, generated_images)
+                total_ssim += batch_ssim
+                total_lpips += batch_lpips
+                num_batches += 1
 
-                beard_images = beard_images.to(self.device)
-                no_beard_images = no_beard_images.to(self.device)
-                
-                ssim_scores.append(self.calculate_ssim(beard_images, no_beard_images))
-                lpips_scores.append(self.calculate_lpips(beard_images, no_beard_images))
-                
-            # Collect paths for FID calculation
-            for pair in test_dataset.image_pairs:
-                beard_paths.append(pair[1])
-                no_beard_paths.append(pair[2])
-        
-        # Calculate FID
-        fid_score = self.calculate_fid(beard_paths, no_beard_paths)
-        
-        # Calculate mean scores
-        results = {
-            'ssim': float(np.mean(ssim_scores)),
-            'lpips': float(np.mean(lpips_scores)),
-            'fid': fid_score
-        }
-        
-        # Log results
-        logging.info("Evaluation Results:")
-        for metric, value in results.items():
-            logging.info(f"{metric.upper()} Score: {value:.4f}")
-            
-        return results
+        # Average SSIM and LPIPS over all batches
+        avg_ssim = total_ssim / num_batches
+        avg_lpips = total_lpips / num_batches
+
+        return avg_ssim, avg_lpips
