@@ -186,3 +186,49 @@ def visualize_test_samples(folder_path, step=1):
     plt.imshow(concatenated_image)
     plt.axis("off")
     plt.show()
+
+def show_epoch_progress(epoch_max, sample_num, step=1):
+    """
+    Display the progression of generated images across epochs in a vertical layout with epoch numbers on the y-axis.
+    Allows skipping epochs based on the specified step.
+
+    Args:
+        epoch_max (int): Maximum number of epochs.
+        sample_num (int): The specific sample number to visualize.
+        step (int): Step size to skip epochs (e.g., 1 for all, 2 for every other epoch).
+
+    Returns:
+        None: Displays the concatenated images with annotations.
+    """
+
+    # Create the list of image paths, skipping steps
+    image_paths = [
+        os.path.join("samples", f"epoch_{epoch}_sample_{sample_num}.png")
+        for epoch in range(0, epoch_max, step)
+    ]
+
+    # Load images
+    images = []
+    epochs = []  # Keep track of the epochs being used
+    for epoch, img_path in zip(range(0, epoch_max, step), image_paths):
+        try:
+            img = Image.open(img_path)
+            images.append(img)
+            epochs.append(epoch)
+        except Exception as e:
+            print(f"Error loading {img_path}: {e}")
+
+    # Create the plot with epoch numbers as y-axis labels
+    fig, ax = plt.subplots(len(images), 1, figsize=(6, len(images) * 4))
+
+    if len(images) == 1:
+        ax = [ax]  # Ensure ax is iterable if there's only one image
+
+    for i, (img, epoch) in enumerate(zip(images, epochs)):
+        ax[i].imshow(img)
+        ax[i].axis("off")
+        ax[i].set_title(f"Epoch {epoch}", fontsize=12, loc="left")
+
+    # Adjust layout for better visualization
+    plt.tight_layout()
+    plt.show()
