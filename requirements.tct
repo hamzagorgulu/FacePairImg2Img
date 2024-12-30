@@ -1,0 +1,6 @@
+kornia==0.7.4
+kornia-rs==0.1.7
+lpips==0.1.4
+pytorch-fid==0.3.0
+torchmetrics==1.6.1
+mediapipe==0.10.20
